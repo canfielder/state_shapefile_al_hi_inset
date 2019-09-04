@@ -17,8 +17,10 @@ p_load(
     broom
   , mapproj
   , maptools
+  , noncensus
   , rgeos
   , rgdal
+  , RColorBrewer
   , socviz
   , scales
   , stringr
@@ -27,15 +29,19 @@ p_load(
 )
 ```
 
-# Read in the GeoJSON File
+# Read in the GeoJSON Files
 The U.S. state-level maps in the Socviz library were prepared using shapefiles from the U.S. Census Bureau that were converted to GeoJSON format by [Eric Celeste](https://eric.clst.org/tech/usgeojson/). I used the 5m file. If this source is no longer available raw shapefiles can be obtained from the [US Census Bureau](https://www.census.gov/programs-surveys/geography.html). Shape files can then be transformed to GeoJSON via free online converters, such as [MyGeodata Converter](https://mygeodata.cloud/converter).
 ```{r }
 us_states <- readOGR(
     dsn = "./data/gz_2010_us_040_00_5m.json"
     )
-```
 
-# Transform Coordinate System
+us_counties <- readOGR(
+    dsn = "./data/gz_2010_us_050_00_5m.json"
+    )
+```
+# State Level Map
+## Transform Coordinate System
 ```{r}
 us_states_aea <- spTransform(us_states,
                     CRS("+proj=laea +lat_0=45 +lon_0=-100 \
@@ -46,96 +52,190 @@ us_states_aea <- spTransform(us_states,
 us_states_aea@data$id <- rownames(us_states_aea@data)
 ```
 
-# Re-size and Shift States
-## Alaska
+## Re-size and Shift States
+### Alaska
 ```{r}
 # Isolate Alaska Portion of the Shapefile
-alaska <- us_states_aea[us_states_aea$STATE == "02",]
+alaska_s <- us_states_aea[us_states_aea$STATE == "02",]
 
 # Rotate Alaska 50 degrees
-alaska <- elide(alaska, rotate=-50)
+alaska_s <- elide(alaska_s, rotate=-50)
 
 # Rescale Aaska
-alaska <- elide(alaska, scale=max(apply(bbox(alaska), 1, diff)) / 2.3)
+alaska_s <- elide(alaska_s, scale=max(apply(bbox(alaska_s), 1, diff)) / 2.3)
 
 # Shift Alaska Coordiantes to Below California / Arizona
-alaska <- elide(alaska, shift=c(-2.3e6, -2.475e6))
+alaska_s <- elide(alaska_s, shift=c(-2.3e6, -2.475e6))
 
 # Retrieve Projection Information
-proj4string(alaska) <- proj4string(us_states_aea)
+proj4string(alaska_s) <- proj4string(us_states_aea)
 ```
 
-## Hawaii
+### Hawaii
 ```{r}
 # Isolate Hawaii Portion of the Shapefile
-hawaii <- us_states_aea[us_states_aea$STATE=="15",]
+hawaii_s <- us_states_aea[us_states_aea$STATE=="15",]
 
 # Rotate Hawaii 35 degrees
-hawaii <- elide(hawaii, rotate=-35)
+hawaii_s <- elide(hawaii_s, rotate=-35)
 
 # Shift Hawaii Coordiantes to Below Arizona / New Mexico / Texas
-hawaii <- elide(hawaii, shift=c(5.4e6, -1.4e6))
+hawaii_s <- elide(hawaii_s, shift=c(5.4e6, -1.4e6))
 
 # Retrieve Projection Information
-proj4string(hawaii) <- proj4string(us_states_aea)
+proj4string(hawaii_s) <- proj4string(us_states_aea)
 ```
 
-# Recombine Shifted Files
+## Recombine Shifted Files
 Note that Puerto Rico will be dropped in its entirety. If you have Puerto Rico data Healy recommends to shift it to between Texas and Florida
 ```{r}
 # Drop Original Alaska, Hawaii, and Puerto Rico
 us_states_aea <- us_states_aea[!us_states_aea$STATE %in% c("02", "15", "72"),]
 
 # Bind Alaska and Hawaii
-us_states_aea <- rbind(us_states_aea, alaska, hawaii)
+us_states_aea <- rbind(us_states_aea, alaska_s, hawaii_s)
 ```
 
-# Tidy Shapefile
+## Tidy Shapefile
 The united states shape-file needs to be converted into a data frame for easy use with ggplot. The State FIPS code is also created here. Once created the ID code is no longer necessary and is dropped.
 ```{r warning=FALSE}
-us_map  <- tidy(us_states_aea, region = "GEO_ID") %>% 
+us_state_map  <- tidy(us_states_aea, region = "GEO_ID") %>% 
   mutate(state_fips = str_sub(id,-2,-1)) %>% 
   select(-id)
 ```
 
-# Export State-Level Data Frame
+## Export State-Level Data Frame
 
 The final state-level data frame is saved as file *us_map.RDS*.
 ```{r}
 saveRDS(
-    object = us_map
-  , file = "./us_map.RDS"
+    object = us_state_map
+  , file = "./us_state_map.RDS"
   )
 ```
 
-# Inset Lines on GGPlot
-I also developed lines to be places on a ggplot map to create boxes around Alaska and Hawaii. I followed the same aesthetic format as Figure 7.1 in Healy. 
-
-## State Map Without Lines
+# County Level Map
+## Transform Coordinate System
 ```{r}
-p <- ggplot()
+us_county_aea <- spTransform(us_counties,
+                    CRS("+proj=laea +lat_0=45 +lon_0=-100 \
+                         +x_0=0 +y_0=0 +a=6370997 +b=6370997 \
+                         +units=m +no_defs"))
 
-p1 <- p + geom_polygon(
-    data = us_map 
-  , mapping = aes(x = long, y = lat, group = group, fill = state_fips)
-  , color = "gray90"
-  , alpha = 0.75
-  , size = 0.5) + 
-  coord_equal() +
-  scale_fill_viridis_d() +
-  guides(fill = "none") +
-  theme_void()
-
-p1
+# Convert Row Names to Column
+us_county_aea@data$id <- rownames(us_county_aea@data)
 ```
 
-## State Map With Inset Lines
+## Re-size and Shift States
+### Alaska
+```{r}
+# Isolate Alaska Portion of the Shapefile
+alaska_c <- us_county_aea[us_county_aea$STATE == "02",]
+
+# Rotate Alaska 50 degrees
+alaska_c <- elide(alaska_c, rotate=-50)
+
+# Rescale Aaska
+alaska_c <- elide(alaska_c, scale=max(apply(bbox(alaska_c), 1, diff)) / 2.3)
+
+# Shift Alaska Coordiantes to Below California / Arizona
+alaska_c <- elide(alaska_c, shift=c(-2.3e6, -2.475e6))
+
+# Retrieve Projection Information
+proj4string(alaska_c) <- proj4string(us_county_aea)
+```
+
+### Hawaii
+```{r}
+# Isolate Hawaii Portion of the Shapefile
+hawaii_c <- us_county_aea[us_county_aea$STATE=="15",]
+
+# Rotate Hawaii 35 degrees
+hawaii_c <- elide(hawaii_c, rotate=-35)
+
+# Shift Hawaii Coordiantes to Below Arizona / New Mexico / Texas
+hawaii_c <- elide(hawaii_c, shift=c(5.4e6, -1.4e6))
+
+# Retrieve Projection Information
+proj4string(hawaii_c) <- proj4string(us_county_aea)
+```
+
+## Recombine Shifted Files
+Note that Puerto Rico will be dropped in its entirety. If you have Puerto Rico data Healy recommends to shift it to between Texas and Florida
+```{r}
+# Drop Original Alaska, Hawaii, and Puerto Rico
+us_county_aea <- us_county_aea[!us_county_aea$STATE %in% c("02", "15", "72"),]
+
+# Bind Alaska and Hawaii
+us_county_aea <- rbind(us_county_aea, alaska_c, hawaii_c)
+```
+
+## Tidy Shapefile
+The united states shape-file needs to be converted into a data frame for easy use with ggplot. The State FIPS code is also created here. Once created the ID code is no longer necessary and is dropped.
+```{r warning=FALSE}
+us_county_map  <- tidy(us_county_aea, region = "GEO_ID") %>% 
+  mutate(
+    state_fips = str_sub(id,-5,-4),
+    county_fips = str_sub(id,-3,-1),
+    fips = str_sub(id,-5,-1)
+    ) %>% 
+  select(-id)
+```
+
+## Export County-Level Data Frame
+The final state-level data frame is saved as file *us_map.RDS*.
+```{r}
+saveRDS(
+    object = us_county_map
+  , file = "./us_county_map.RDS"
+  )
+```
+
+# Testing
+In order to test that the state and county maps display correctly and can connect to data based on the proper FIPS code, data from the socviz package will be used. 
+
+## Creating Data Frames
+```{r}
+
+# Create List of Travel Time By Complete FIPS code
+counties_travel_time <- socviz::county_data %>% 
+  select(id, travel_time)
+
+# Merge with Spatial Data
+us_county_map_travel <- us_county_map %>% 
+  left_join(counties_travel_time, by = c("fips" = "id"))
+```
+
+
+
+### Inset Lines on GGPlot
+I also developed lines to be places on a ggplot map to create boxes around Alaska and Hawaii. I followed the same aesthetic format as Figure 7.1 in Healy. 
+## County Map - No Inset Boxes
+```{r}
+c <- ggplot()
+
+c1 <- c + geom_polygon(
+    data = us_county_map_travel 
+  , mapping = aes(x = long, y = lat, group = group, fill = travel_time)
+  , color = "gray90"
+  , alpha = 0.75
+  , size = 0.005) + 
+  coord_equal() +
+  scale_fill_viridis_c(direction = -1) +
+  guides(fill=guide_legend(title="Travel Time"))+
+  labs(title = "Average Daily Travel Time By County") +
+  theme_void()
+
+c1
+```
+
+## County Map - With Inset Boxes
 ```{r}
 # Line Properties
 line_color = "black"
 line_size = 0.5
 
-p2 <- p1 + 
+c2 <- c1 + 
   geom_segment(aes(x = -2.10e6, y = -1.50e6, xend = -1.15e6, yend = -1.50e6)
                , color =  line_color, size = line_size
                ) + 
@@ -158,6 +258,65 @@ p2 <- p1 +
                , color =  line_color, size = line_size
                )
 
-p2
+c2
 ```
 
+## County Map With State Borders - No Inset Boxes
+```{r}
+s_c <-  ggplot()
+
+s_c1 <- s_c + 
+  geom_polygon(
+    data = us_county_map_travel 
+  , mapping = aes(x = long, y = lat, group = group, fill = travel_time)
+  , color = "gray90"
+  , alpha = 0.75
+  , size = 0.25) +
+    geom_polygon(
+    data = us_state_map
+  , mapping = aes(x = long, y = lat, group = group)
+  , color = "#1A5276"
+  , alpha = 0
+  , size = 1)
+  
+s_c2 <- s_c1 + 
+  coord_equal() +
+  scale_fill_viridis_c(direction = -1) +
+  guides(fill=guide_legend(title="Travel Time"))+
+  labs(title = "Average Daily Travel Time By County") +
+  theme_void()
+
+s_c2
+```
+
+## County Map With State Borders - With Inset Boxes
+```{r}
+# Line Properties
+line_color = "black"
+line_size = 0.5
+
+s_c3 <- s_c2 + 
+  geom_segment(aes(x = -2.10e6, y = -1.50e6, xend = -1.15e6, yend = -1.50e6)
+               , color =  line_color, size = line_size
+               ) + 
+  geom_segment(aes(x = -1.15e6, y = -1.50e6, xend = -7.75e5, yend = -1.85e6)
+               , color =  line_color, size = line_size
+               ) +
+  geom_segment(aes(x = -7.75e5, y = -1.85e6, xend = -7.75e5, yend = -2.20e6)
+               , color =  line_color, size = line_size
+               ) +
+  geom_segment(aes(x = -7.75e5, y = -1.85e6, xend = -2.90e5, yend = -1.85e6)
+               , color =  line_color, size = line_size
+               ) +
+  geom_segment(aes(x = -2.90e5, y = -1.85e6, xend =  1.00e5, yend = -2.20e6)
+               , color =  line_color, size = line_size
+               ) +
+  geom_segment(aes(x =  1.00e5, y = -2.20e6, xend =  1.00e5, yend = -2.40e6)
+               , color =  line_color, size = line_size
+               ) +
+  geom_segment(aes(x = -7.75e5, y = -2.20e6, xend = -5.60e5, yend = -2.40e6)
+               , color =  line_color, size = line_size
+               )
+
+s_c3
+```
